@@ -18,16 +18,42 @@ if ($error != "") {
 }
 
 // Dummy Authentication
-if ($username == "admin" && $email == "admin@example.com" && $password == "Admin@123") {
+$users = [
+    [
+        "username" => "admin",
+        "email" => "admin@example.com",
+        "password" => "Admin@123",
+        "theme" => "dark"  
+    ],
+    [
+        "username" => "user1",
+        "email" => "user1@gmail.com",
+        "password" => "User@123",
+        "theme" => "warm"
+    ],
+    [
+        "username" => "user2",
+        "email" => "user2@gmail.com",
+        "password" => "User@456",
+        "theme" => "light"
+    ]
+];
+$foundUser = null;
 
-    // Theme Logic
-    if ($username == "user1") {
-        $theme = "dark";
-    } elseif ($username == "user2") {
-        $theme = "warm";
-    } else {
-        $theme = "light";
+foreach ($users as $user) {
+    if (
+        $user['username'] == $username &&
+        $user['email'] == $email &&
+        $user['password'] == $password
+    ) {
+        $foundUser = $user;
+        break;
     }
+}
+
+if ($foundUser) {
+
+    $theme = $foundUser['theme'];
 
     // Sessions
     $_SESSION['username'] = $username;
@@ -51,3 +77,5 @@ if ($username == "admin" && $email == "admin@example.com" && $password == "Admin
     exit();
 }
 ?>
+
+
