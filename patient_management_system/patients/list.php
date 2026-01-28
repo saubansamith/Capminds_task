@@ -2,15 +2,16 @@
 <?php include('../includes/header.php'); ?>
 
 <div class="d-flex justify-content-between align-items-center mb-4">
-    <h2 class="fw-bold text-dark">Patient Registry</h2>
+    <h2 class="fw-bold text-dark">Patient List</h2>
     <a href="create.php" class="btn btn-primary btn-action shadow-sm">+ Add New Patient</a>
 </div>
 
 <?php
+// pagination
 $limit = 5;
 $page = $_GET['page'] ?? 1;
 $start = ($page - 1) * $limit;
-
+ 
 $search = $_GET['search'] ?? '';
 $sort = $_GET['sort'] ?? '';
 
@@ -24,17 +25,20 @@ if ($sort == 'age_desc') $order = "age DESC";
 $search_param = "%$search%";
 
 // ORDER BY cannot be parameterized, so we append it safely
-$query = "SELECT * FROM patients 
-          WHERE patient_name LIKE ? 
-          OR diagnosis LIKE ?
+$query = "SELECT patients.*, doctors.doctor_name, doctors.specialization
+          FROM patients
+          LEFT JOIN doctors ON patients.doctor_id = doctors.id
+          WHERE patients.patient_name LIKE ? 
+          OR patients.diagnosis LIKE ?
           ORDER BY $order
           LIMIT ?, ?";
+
+
 
 $stmt = $conn->prepare($query);
 $stmt->bind_param("ssii", $search_param, $search_param, $start, $limit);
 $stmt->execute();
 $result = $stmt->get_result();
-
 // Total records count for pagination
 $count_query = $conn->prepare("SELECT COUNT(*) as total FROM patients 
                                WHERE patient_name LIKE ? 
@@ -43,77 +47,94 @@ $count_query->bind_param("ss", $search_param, $search_param);
 $count_query->execute();
 $count_result = $count_query->get_result()->fetch_assoc();
 $total_records = $count_result['total'];
-
 $total_pages = ceil($total_records / $limit);
-
 ?>
 
-<div class="row mb-4">
-    <div class="col-md-6">
-        <form method="GET" class="input-group shadow-sm">
-        <input name="search" 
-           value="<?= htmlspecialchars($search) ?>" 
-           placeholder="Search patients..." 
-           class="form-control border-0 py-2 ps-3">
+<div class="d-flex justify-content-between align-items-center mb-4">
 
-      
-    <select name="sort" class="form-select border-0" style="max-width:180px;">
-        <option value="">Sort By</option>
-        <option value="name_asc" <?= ($sort=='name_asc')?'selected':'' ?>>Name (A-Z)</option>
-        <option value="name_desc" <?= ($sort=='name_desc')?'selected':'' ?>>Name (Z-A)</option>
-        <option value="age_asc" <?= ($sort=='age_asc')?'selected':'' ?>>Age (Low-High)</option>
-        <option value="age_desc" <?= ($sort=='age_desc')?'selected':'' ?>>Age (High-Low)</option>
+    <form method="GET" class="d-flex gap-2 w-75">
 
-    </select>
+        <input type="text" 
+               name="search"
+               value="<?= htmlspecialchars($search) ?>" 
+               class="form-control"
+               placeholder="🔍 Search by name or diagnosis">
 
-    <button class="btn btn-white bg-white border-0 text-primary px-3" type="submit">🔍</button>
-        </form>
-    </div>
+        <select name="sort" class="form-select" style="max-width:200px;">
+            <option value="">Sort By</option>
+            <option value="name_asc" <?= ($sort=='name_asc')?'selected':'' ?>>Name A–Z</option>
+            <option value="name_desc" <?= ($sort=='name_desc')?'selected':'' ?>>Name Z–A</option>
+            <option value="age_asc" <?= ($sort=='age_asc')?'selected':'' ?>>Age Low–High</option>
+            <option value="age_desc" <?= ($sort=='age_desc')?'selected':'' ?>>Age High–Low</option>
+        </select>
+
+        <button class="btn btn-primary">Search</button>
+    </form>
+
+    <!-- <a href="create.php" class="btn btn-success">+ Add Patient</a> -->
+
 </div>
 
-<div class="table-responsive table-modern">
-<table class="table table-hover mb-0">
-    <thead>
-        <tr>
-            <th class="py-3">ID</th>
-            <th class="py-3">Patient Name</th>
-            <th class="py-3">Email</th>
-            <th class="py-3">Phone</th>
-            <th class="py-3">Age</th>
-            <th class="py-3">Gender</th>
-            <th class="py-3">Diagnosis</th>
-            <th class="text-end pe-4 py-3">Actions</th>
-        </tr>
-    </thead>
+
+<div class="card shadow-sm">
+<div class="card-body p-0">
+<table class="table table-striped table-hover mb-0 align-middle">
+<thead>
+<tr>
+    <th>Patient Name</th>
+    <th>Email</th>
+    <th>Phone</th>
+    <th>Age</th>
+    <th>Gender</th>
+    <th>Diagnosis</th>
+    <th>Doctor</th>
+    <th class="text-end">Actions</th>
+</tr>
+</thead>
+
     <tbody>
         <?php $serial = $start + 1; ?>
         <?php while($row = $result->fetch_assoc()): ?>
-        <tr>
-            <td><?= $serial++ ?></td>
-            <td><?= htmlspecialchars($row['patient_name']) ?></td>
-            <td><?= htmlspecialchars($row['email']) ?></td>
-            <td><?= htmlspecialchars($row['phone']) ?></td>
-            <td><?= $row['age'] ?> Years</td>
-            <td>
-                <span class="badge bg-<?= ($row['gender']=='Male') ? 'info' : 'danger' ?>">
-                    <?= $row['gender'] ?>
-                </span>
-            </td>
-            <td><?= htmlspecialchars($row['diagnosis']) ?></td>
-            <td class="text-end">
-                <a href="edit.php?id=<?= $row['id'] ?>" class="btn btn-warning btn-sm">Edit</a>
-                <a href="delete.php?id=<?= $row['id'] ?>" class="btn btn-danger btn-sm" onclick="return confirm('Delete this record?')">Delete</a>
-            </td>
-        </tr>
+            <tr class="align-middle">
+    <td class="ps-4 fw-bold text-primary"><?= $row['patient_name'] ?></td>
+    <td><?= $row['email'] ?></td>
+    <td><?= $row['phone'] ?></td>
+    <td><?= $row['age'] ?> Years</td>
+    <td>
+        <span class="badge bg-info text-white">
+            <?= $row['gender'] ?>
+        </span>
+    </td>
+    <td><?= $row['diagnosis'] ?></td>
+
+    <!-- ✅ Doctor Column -->
+    <td>
+        <?php if($row['doctor_name']): ?>
+            Dr. <?= $row['doctor_name'] ?>
+            <div class="small text-muted">
+                (<?= $row['specialization'] ?>)
+            </div>
+        <?php else: ?>
+            <span class="text-muted">Not Assigned</span>
+        <?php endif; ?>
+    </td>
+
+    <td class="text-end pe-4">
+        <a href="edit.php?id=<?= $row['id'] ?>" class="btn btn-sm btn-warning">Edit</a>
+        <a href="delete.php?id=<?= $row['id'] ?>" class="btn btn-sm btn-danger"
+           onclick="return confirm('Delete this record?')">Delete</a>
+    </td>
+</tr>
+
         <?php endwhile; ?>
     </tbody>
 </table>
-
 </div>
+</div>
+
 <div class="d-flex justify-content-center mt-4">
     <nav>
         <ul class="pagination">
-
             <!-- Previous Button -->
             <?php if($page > 1): ?>
                 <li class="page-item">
@@ -123,7 +144,6 @@ $total_pages = ceil($total_records / $limit);
                     </a>
                 </li>
             <?php endif; ?>
-
             <!-- Page Numbers -->
             <?php for($i = 1; $i <= $total_pages; $i++): ?>
                 <li class="page-item <?= ($i == $page) ? 'active' : '' ?>">
@@ -133,7 +153,6 @@ $total_pages = ceil($total_records / $limit);
                     </a>
                 </li>
             <?php endfor; ?>
-
             <!-- Next Button -->
             <?php if($page < $total_pages): ?>
                 <li class="page-item">
@@ -143,10 +162,7 @@ $total_pages = ceil($total_records / $limit);
                     </a>
                 </li>
             <?php endif; ?>
-
         </ul>
     </nav>
 </div>
-
-
 <?php include('../includes/footer.php'); ?>
