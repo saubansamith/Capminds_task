@@ -1,5 +1,7 @@
 <?php
 include('../config/db.php');
+$doctors = $conn->query("SELECT id, doctor_name, specialization FROM doctors");
+
 include('../includes/header.php');
 
 $id = $_GET['id'];
@@ -21,6 +23,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     $age = $_POST['age'];
     $gender = $_POST['gender'];
     $diagnosis = trim($_POST['diagnosis']);
+    $doctor_id = $_POST['doctor_id'] ?: NULL;
+
 
     // ✅ Email format
     if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
@@ -44,8 +48,19 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
     // ✅ If no errors → update
     if (empty($errors)) {
-        $stmt = $conn->prepare("UPDATE patients SET patient_name=?, email=?, phone=?, age=?, gender=?, diagnosis=? WHERE id=?");
-        $stmt->bind_param("sssissi", $name, $email, $phone, $age, $gender, $diagnosis, $id);
+        $stmt = $conn->prepare("UPDATE patients SET patient_name=?, email=?, phone=?, age=?, gender=?, diagnosis=?, doctor_id=? WHERE id=?");
+        $stmt->bind_param(
+            "sssissii",
+            $name,
+            $email,
+            $phone,
+            $age,
+            $gender,
+            $diagnosis,
+            $doctor_id,
+            $id
+        );
+        
         $stmt->execute();
 
         echo "<div class='alert alert-success'>Patient Updated Successfully!</div>";
@@ -57,8 +72,10 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             'phone' => $phone,
             'age' => $age,
             'gender' => $gender,
-            'diagnosis' => $diagnosis
+            'diagnosis' => $diagnosis,
+            'doctor_id' => $doctor_id
         ];
+        
     } else {
         foreach($errors as $error){
             echo "<div class='alert alert-danger'>$error</div>";
@@ -76,6 +93,17 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     <input name="age" type="number" value="<?= $patient['age'] ?>" class="form-control" required><br>
     <input name="gender" value="<?= $patient['gender'] ?>" class="form-control" required><br>
     <input name="diagnosis" value="<?= $patient['diagnosis'] ?>" class="form-control" required><br>
+    <select name="doctor_id" class="form-control mb-3">
+    <option value="">Select Doctor</option>
+    <?php while($doc = $doctors->fetch_assoc()): ?>
+        <option value="<?= $doc['id'] ?>"
+            <?= ($patient['doctor_id'] == $doc['id']) ? 'selected' : '' ?>>
+           Dr. <?= $doc['doctor_name'] ?> (<?= $doc['specialization'] ?>)
+        </option>
+         <?php endwhile; ?>
+        </select>
+
+    
     <button class="btn btn-warning">Update Patient</button>
 </form>
 
