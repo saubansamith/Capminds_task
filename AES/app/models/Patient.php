@@ -9,91 +9,114 @@ class Patient {
         $this->conn = Database::connect();
     }
 
+    /* ================= GET ALL ================= */
+
     public function getAll($user_id) {
-        $stmt = $this->conn->prepare("SELECT * FROM patients WHERE user_id=?");
+        $stmt = $this->conn->prepare(
+            "SELECT * FROM patients WHERE user_id=?"
+        );
         $stmt->bind_param("i", $user_id);
         $stmt->execute();
         return $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
     }
-    
 
-    public function create($name, $age, $gender, $phoneEncrypted, $phoneHash, $address, $userId)
-{
-    $stmt = $this->conn->prepare("
-        INSERT INTO patients
-        (name, age, gender, phone_encrypted, phone_hash, address, user_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-    ");
+    /* ================= CREATE ================= */
 
-    $stmt->bind_param(
-        "sissssi",
+    public function create(
         $name,
         $age,
         $gender,
-        $phoneEncrypted,
-        $phoneHash,
+        $phone,
         $address,
         $userId
-    );
+    ) {
 
-    return $stmt->execute();
-}
+        $stmt = $this->conn->prepare("
+            INSERT INTO patients
+            (name, age, gender, phone, address, user_id)
+            VALUES (?, ?, ?, ?, ?, ?)
+        ");
 
-    public function update($id, $userId, $name, $age, $gender, $phone, $address) {
+        $stmt->bind_param(
+            "sisssi",
+            $name,
+            $age,
+            $gender,
+            $phone,
+            $address,
+            $userId
+        );
 
-        // Step 1: Check ownership
+        return $stmt->execute();
+    }
+
+    /* ================= UPDATE ================= */
+
+    public function update(
+        $id,
+        $userId,
+        $name,
+        $age,
+        $gender,
+        $phone,
+        $address
+    ) {
+
+        // Ownership check
         $check = $this->conn->prepare(
             "SELECT id FROM patients WHERE id=? AND user_id=?"
         );
         $check->bind_param("ii", $id, $userId);
         $check->execute();
-        $result = $check->get_result();
-    
-        if ($result->num_rows === 0) {
+
+        if ($check->get_result()->num_rows === 0) {
             return "not_allowed";
         }
-    
-        // Step 2: Update
-        $stmt = $this->conn->prepare(
-            "UPDATE patients 
-             SET name=?, age=?, gender=?, phone=?, address=? 
-             WHERE id=?"
+
+        $stmt = $this->conn->prepare("
+            UPDATE patients
+            SET name=?, age=?, gender=?, phone=?, address=?
+            WHERE id=? AND user_id=?
+        ");
+
+        $stmt->bind_param(
+            "sisssii",
+            $name,
+            $age,
+            $gender,
+            $phone,
+            $address,
+            $id,
+            $userId
         );
-        $stmt->bind_param("sisssi", $name, $age, $gender, $phone, $address, $id);
-    
+
         return $stmt->execute();
     }
-    
+
+    /* ================= DELETE ================= */
 
     public function delete($id, $userId) {
+
         $stmt = $this->conn->prepare(
             "DELETE FROM patients WHERE id=? AND user_id=?"
         );
+
         $stmt->bind_param("ii", $id, $userId);
+
         return $stmt->execute() && $stmt->affected_rows > 0;
     }
-    
+
+    /* ================= GET BY ID ================= */
+
     public function getById($id, $userId) {
+
         $stmt = $this->conn->prepare(
             "SELECT * FROM patients WHERE id=? AND user_id=?"
         );
+
         $stmt->bind_param("ii", $id, $userId);
         $stmt->execute();
-        return $stmt->get_result()->fetch_assoc();
-    }
-
-    public function findByPhoneHash($hash)
-    {
-        $stmt = $this->conn->prepare("
-            SELECT id FROM patients WHERE phone_hash = ?
-        ");
-
-        $stmt->bind_param("s", $hash);
-        $stmt->execute();
 
         return $stmt->get_result()->fetch_assoc();
     }
-
-    
-    
 }
