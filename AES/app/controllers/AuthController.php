@@ -3,8 +3,9 @@ require_once __DIR__ . '/../models/User.php';
 require_once __DIR__ . '/../helpers/Response.php';
 require_once __DIR__ . '/../helpers/JWT.php';
 require_once __DIR__ . '/../helpers/AES.php';
+require_once __DIR__ . '/../helpers/Csrf.php';
 require_once __DIR__ . '/../helpers/BlindIndex.php';
-
+require_once __DIR__ . '/../core/Database.php';
 
 class AuthController {
 
@@ -20,26 +21,26 @@ class AuthController {
 
         $userModel = new User();
 
-       /* -------- NORMALIZE EMAIL -------- */
+        // Normalize email
         $emailNormalized = strtolower(trim($data['email']));
 
-        /* -------- GENERATE HASH FOR SEARCH -------- */
+        // Generate blind index hash
         $emailHash = BlindIndex::emailHash($emailNormalized);
 
-        /* -------- CHECK DUPLICATE USING HASH -------- */
+        // Check duplicate using hash
         if ($userModel->findByEmailHash($emailHash)) {
             Response::error("Email already exists");
         }
 
-        /* -------- ENCRYPT EMAIL FOR STORAGE -------- */
+        // Encrypt email for storage
         $emailEncrypted = AES::encrypt($emailNormalized);
 
-        /* -------- PASSWORD HASH -------- */
+        // Hash password
         $hashedPassword = password_hash($data['password'], PASSWORD_DEFAULT);
 
-        /* -------- SAVE USER -------- */
+        // Save user
         $userModel->create(
-            $data['name'],
+            trim($data['name']),
             $emailEncrypted,
             $emailHash,
             $hashedPassword
@@ -53,72 +54,90 @@ class AuthController {
     public static function login() {
 
         $data = $GLOBALS['request_body'];
-    
-        if (!isset($data['email'], $data['password'])) {
-            Response::error("Email and password required");
+
+        if (
+            empty($data['email']) ||
+            empty($data['password'])
+        ) {
+            Response::error("Email and password required", 400);
         }
-    
+        
+
         $userModel = new User();
-    
-        /* Normalize Email */
+
+        // Normalize email
         $emailNormalized = strtolower(trim($data['email']));
-    
-        /* Create Blind Index Hash */
+
+        // Generate blind index
         $emailHash = BlindIndex::emailHash($emailNormalized);
-    
-        /* Find user using HASH (NOT plain email) */
+
+        // Find user by hash
         $user = $userModel->findByEmailHash($emailHash);
-    
-        /* Validate Password */
-        if (!$user || !password_verify($data['password'], $user['password'])) {
+
+        if (
+            !$user ||
+            empty($user['password']) ||
+            !password_verify($data['password'], $user['password'])
+        ) {
             Response::error("Invalid credentials", 401);
         }
-    
-        /* Decrypt email only after user verified */
+        
+
+        // Decrypt email after verification
         $userEmailPlain = AES::decrypt($user['email_encrypted']);
-    
-        require_once __DIR__ . '/../core/Database.php';
+
         $conn = Database::connect();
-    
+
         $accessExpiry  = (int)($_ENV['ACCESS_TOKEN_EXPIRY'] ?? 60);
         $refreshExpiry = (int)($_ENV['REFRESH_TOKEN_EXPIRY'] ?? 172800);
-    
+
         /* -------- CREATE ACCESS TOKEN -------- */
 
         $payload = [
             "user_id" => $user['id'],
-            "email" => $userEmailPlain,
+            "email"   => $userEmailPlain,
             "iat"     => time(),
             "exp"     => time() + $accessExpiry
         ];
 
         $accessToken = JWT::generate($payload);
 
-        /* -------- creating a REFRESH TOKEN -------- */
+        /* -------- CREATE REFRESH TOKEN -------- */
 
         $refreshTokenPlain = bin2hex(random_bytes(40));
         $refreshTokenHash  = password_hash($refreshTokenPlain, PASSWORD_DEFAULT);
-
         $refreshTokenExpiry = date('Y-m-d H:i:s', time() + $refreshExpiry);
 
-        // Delete old tokens for this user
+        // Delete old tokens
         $deleteOld = $conn->prepare("DELETE FROM refresh_tokens WHERE user_id = ?");
         $deleteOld->bind_param("i", $user['id']);
         $deleteOld->execute();
 
+        $currentIp = $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0';
+        $userAgent = $_SERVER['HTTP_USER_AGENT'] ?? 'unknown';
+        $userAgentHash = hash('sha256', $userAgent);
+
         // Insert new refresh token
         $insert = $conn->prepare("
-            INSERT INTO refresh_tokens (user_id, refresh_token, expires_at)
-            VALUES (?, ?, ?)
-        ");
-        $insert->bind_param("iss", $user['id'], $refreshTokenHash, $refreshTokenExpiry);
+        INSERT INTO refresh_tokens 
+        (user_id, refresh_token, expires_at, user_agent_hash, last_ip, risk_score)
+        VALUES (?, ?, ?, ?, ?, 0)");
+
+        $insert->bind_param(
+            "issss",
+            $user['id'],
+            $refreshTokenHash,
+            $refreshTokenExpiry,
+            $userAgentHash,
+            $currentIp
+        );
+
         $insert->execute();
 
-        /* -------- SET COOKIE -------- */
-
+        // Set secure HttpOnly cookie
         setcookie(
             "refresh_token",
-            $refreshTokenPlain,  
+            $refreshTokenPlain,
             [
                 'expires'  => time() + $refreshExpiry,
                 'path'     => '/',
@@ -128,22 +147,17 @@ class AuthController {
             ]
         );
 
-        /* -------- CSRF -------- */
-
-        require_once __DIR__ . '/../helpers/Csrf.php';
-
         $csrfToken = Csrf::generate();
 
-        /* -------- RESPONSE -------- */
-
         Response::success("Login successful", [
-            "access_token" => $accessToken,
-            "expires_in"   => $accessExpiry,
-            "csrf_token"   => $csrfToken
-        ]);
+        "access_token" => $accessToken,
+        "expires_in"   => $accessExpiry,
+        "csrf_token"   => $csrfToken
+    ]);
+
     }
 
-    /* REFRESH  */
+    /* ================= REFRESH ================= */
 
     public static function refresh() {
 
@@ -151,15 +165,13 @@ class AuthController {
             Response::error("Refresh token missing", 401);
         }
 
-        require_once __DIR__ . '/../core/Database.php';
         $conn = Database::connect();
-
         $oldRefreshToken = $_COOKIE['refresh_token'];
 
-        /* -------- GET ALL TOKENS -------- */
-
+        // Fetch all refresh tokens
         $stmt = $conn->prepare("
-            SELECT user_id, refresh_token, expires_at
+            SELECT user_id, refresh_token, expires_at,
+                   user_agent_hash, last_ip, risk_score
             FROM refresh_tokens
         ");
         $stmt->execute();
@@ -186,13 +198,46 @@ class AuthController {
 
         $userId = $validToken['user_id'];
 
+        $currentIp = $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0';
+        $userAgent = $_SERVER['HTTP_USER_AGENT'] ?? 'unknown';
+        $currentUserAgentHash = hash('sha256', $userAgent);
 
-        // Get user email
-        $userStmt = $conn->prepare("SELECT email FROM users WHERE id = ?");
+        $riskScore = (int)$validToken['risk_score'];
+
+        // Check IP change
+        if ($validToken['last_ip'] !== $currentIp) {
+            $riskScore += 1;
+        }
+
+        // Check User-Agent change
+        if ($validToken['user_agent_hash'] !== $currentUserAgentHash) {
+            $riskScore += 2;
+        }
+
+        if ($riskScore >= 4) {
+
+            // Delete refresh token
+            $delete = $conn->prepare("DELETE FROM refresh_tokens WHERE user_id = ?");
+            $delete->bind_param("i", $userId);
+            $delete->execute();
+
+            setcookie("refresh_token", "", time() - 3600, "/");
+
+            Response::error("Suspicious activity detected. Please login again.", 401);
+        }
+
+        // Get encrypted email
+        $userStmt = $conn->prepare("SELECT email_encrypted FROM users WHERE id = ?");
         $userStmt->bind_param("i", $userId);
         $userStmt->execute();
-        $userResult = $userStmt->get_result();
-        $user = $userResult->fetch_assoc();
+        $user = $userStmt->get_result()->fetch_assoc();
+
+        if (!$user) {
+            Response::error("User not found", 404);
+        }
+
+        // Decrypt email
+        $email = AES::decrypt($user['email_encrypted']);
 
         $accessExpiry  = (int)($_ENV['ACCESS_TOKEN_EXPIRY'] ?? 60);
         $refreshExpiry = (int)($_ENV['REFRESH_TOKEN_EXPIRY'] ?? 172800);
@@ -201,23 +246,31 @@ class AuthController {
 
         $newRefreshTokenPlain = bin2hex(random_bytes(40));
         $newRefreshTokenHash  = password_hash($newRefreshTokenPlain, PASSWORD_DEFAULT);
-
         $newRefreshExpiry = date('Y-m-d H:i:s', time() + $refreshExpiry);
 
-        /* Delete old token */
+        // Delete old
         $deleteOld = $conn->prepare("DELETE FROM refresh_tokens WHERE user_id = ?");
         $deleteOld->bind_param("i", $userId);
         $deleteOld->execute();
 
-        /* Insert new token */
+        // Insert new
         $insert = $conn->prepare("
-            INSERT INTO refresh_tokens (user_id, refresh_token, expires_at)
-            VALUES (?, ?, ?)
-        ");
-        $insert->bind_param("iss", $userId, $newRefreshTokenHash, $newRefreshExpiry);
+        INSERT INTO refresh_tokens 
+        (user_id, refresh_token, expires_at, user_agent_hash, last_ip, risk_score)
+        VALUES (?, ?, ?, ?, ?, ?)");
+
+        $insert->bind_param(
+            "issssi",
+            $userId,
+            $newRefreshTokenHash,
+            $newRefreshExpiry,
+            $currentUserAgentHash,
+            $currentIp,
+            $riskScore
+        );
+
         $insert->execute();
 
-        /* Update Cookie */
         setcookie(
             "refresh_token",
             $newRefreshTokenPlain,
@@ -230,12 +283,11 @@ class AuthController {
             ]
         );
 
-
         /* -------- CREATE NEW ACCESS TOKEN -------- */
 
         $payload = [
             "user_id" => $userId,
-            "email"   => $user['email'],
+            "email"   => $email,
             "iat"     => time(),
             "exp"     => time() + $accessExpiry
         ];
